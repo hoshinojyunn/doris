@@ -58,7 +58,6 @@ private:
     void register_entity();
     void update_metrics_callback();
 
-private:
     std::mutex _mtx;
     // use shared_ptr for concurrent
     std::shared_ptr<AtomicStatistics> _statistics;
@@ -97,6 +96,10 @@ struct FileCacheProfileReporter {
     RuntimeProfile::Counter* inverted_index_remote_io_timer = nullptr;
     RuntimeProfile::Counter* inverted_index_peer_io_timer = nullptr;
     RuntimeProfile::Counter* inverted_index_io_timer = nullptr;
+    RuntimeProfile::Counter* inverted_index_request_bytes = nullptr;
+    RuntimeProfile::Counter* inverted_index_read_bytes = nullptr;
+    RuntimeProfile::Counter* inverted_index_range_read_count = nullptr;
+    RuntimeProfile::Counter* inverted_index_serial_read_rounds = nullptr;
 
     FileCacheProfileReporter(RuntimeProfile* profile);
     void update(const FileCacheStatistics* statistics) const;

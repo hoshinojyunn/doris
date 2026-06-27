@@ -74,6 +74,10 @@ struct FileCacheStatistics {
     int64_t inverted_index_remote_io_timer = 0;
     int64_t inverted_index_peer_io_timer = 0;
     int64_t inverted_index_io_timer = 0;
+    int64_t inverted_index_request_bytes = 0;
+    int64_t inverted_index_read_bytes = 0;
+    int64_t inverted_index_range_read_count = 0;
+    int64_t inverted_index_serial_read_rounds = 0;
 };
 
 struct IOContext {
