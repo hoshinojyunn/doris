@@ -335,22 +335,6 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
         }
     };
     std::unique_ptr<int, decltype(defer_func)> defer((int*)0x01, std::move(defer_func));
-    if (!io_ctx->read_file_cache) {
-        SCOPED_RAW_TIMER(&stats.remote_read_timer);
-        size_t direct_bytes_read = 0;
-        RETURN_IF_ERROR(_remote_file_reader->read_at(offset, result, &direct_bytes_read, io_ctx));
-        if (direct_bytes_read != bytes_req) {
-            return Status::IOError("short remote read at offset {}, expect {}, got {}", offset,
-                                   bytes_req, direct_bytes_read);
-        }
-        *bytes_read = direct_bytes_read;
-        stats.hit_cache = false;
-        stats.skip_cache = true;
-        stats.bytes_read_from_remote += direct_bytes_read;
-        stats.remote_physical_read_bytes += direct_bytes_read;
-        read_success = true;
-        return Status::OK();
-    }
     if (_is_doris_table && config::enable_read_cache_file_directly) {
         // read directly
         SCOPED_RAW_TIMER(&stats.read_cache_file_directly_timer);
