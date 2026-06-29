@@ -26,22 +26,6 @@
 
 namespace doris::io {
 
-namespace {
-
-constexpr std::array<const char*, SNII_SECTION_COUNT> kSniiSectionNames {
-        "Unknown", "Meta", "Dict", "Posting", "Bsbf", "Norms", "NullBitmap"};
-
-RuntimeProfile::Counter* add_snii_section_counter(RuntimeProfile* profile, const char* section_name,
-                                                  const char* metric_name, TUnit::type unit,
-                                                  const char* parent) {
-    std::string counter_name = "InvertedIndexSnii";
-    counter_name += section_name;
-    counter_name += metric_name;
-    return ADD_CHILD_COUNTER_WITH_LEVEL(profile, counter_name, unit, parent, 1);
-}
-
-} // namespace
-
 std::shared_ptr<AtomicStatistics> FileCacheMetrics::report() {
     std::shared_ptr<AtomicStatistics> output_stats = std::make_shared<AtomicStatistics>();
     std::lock_guard lock(_mtx);
@@ -139,26 +123,6 @@ FileCacheStatistics diff_file_cache_statistics(const FileCacheStatistics& curren
     SUBTRACT_FIELD(inverted_index_range_read_count);
     SUBTRACT_FIELD(inverted_index_serial_read_rounds);
 #undef SUBTRACT_FIELD
-    for (size_t i = 0; i < SNII_SECTION_COUNT; ++i) {
-        diff.inverted_index_snii_section_read_bytes[i] =
-                current.inverted_index_snii_section_read_bytes[i] -
-                previous.inverted_index_snii_section_read_bytes[i];
-        diff.inverted_index_snii_section_remote_physical_read_bytes[i] =
-                current.inverted_index_snii_section_remote_physical_read_bytes[i] -
-                previous.inverted_index_snii_section_remote_physical_read_bytes[i];
-        diff.inverted_index_snii_section_bytes_write_into_cache[i] =
-                current.inverted_index_snii_section_bytes_write_into_cache[i] -
-                previous.inverted_index_snii_section_bytes_write_into_cache[i];
-        diff.inverted_index_snii_section_file_cache_blocks_total[i] =
-                current.inverted_index_snii_section_file_cache_blocks_total[i] -
-                previous.inverted_index_snii_section_file_cache_blocks_total[i];
-        diff.inverted_index_snii_section_file_cache_blocks_hit[i] =
-                current.inverted_index_snii_section_file_cache_blocks_hit[i] -
-                previous.inverted_index_snii_section_file_cache_blocks_hit[i];
-        diff.inverted_index_snii_section_file_cache_blocks_miss[i] =
-                current.inverted_index_snii_section_file_cache_blocks_miss[i] -
-                previous.inverted_index_snii_section_file_cache_blocks_miss[i];
-    }
     return diff;
 }
 
@@ -262,21 +226,6 @@ FileCacheProfileReporter::FileCacheProfileReporter(RuntimeProfile* profile) {
             profile, "InvertedIndexRangeReadCount", TUnit::UNIT, cache_profile, 1);
     inverted_index_serial_read_rounds = ADD_CHILD_COUNTER_WITH_LEVEL(
             profile, "InvertedIndexSerialReadRounds", TUnit::UNIT, cache_profile, 1);
-    for (size_t i = 0; i < SNII_SECTION_COUNT; ++i) {
-        inverted_index_snii_section_read_bytes[i] = add_snii_section_counter(
-                profile, kSniiSectionNames[i], "ReadBytes", TUnit::BYTES, cache_profile);
-        inverted_index_snii_section_remote_physical_read_bytes[i] =
-                add_snii_section_counter(profile, kSniiSectionNames[i], "RemotePhysicalReadBytes",
-                                         TUnit::BYTES, cache_profile);
-        inverted_index_snii_section_bytes_write_into_cache[i] = add_snii_section_counter(
-                profile, kSniiSectionNames[i], "BytesWriteIntoCache", TUnit::BYTES, cache_profile);
-        inverted_index_snii_section_file_cache_blocks_total[i] = add_snii_section_counter(
-                profile, kSniiSectionNames[i], "FileCacheBlocksTotal", TUnit::UNIT, cache_profile);
-        inverted_index_snii_section_file_cache_blocks_hit[i] = add_snii_section_counter(
-                profile, kSniiSectionNames[i], "FileCacheBlocksHit", TUnit::UNIT, cache_profile);
-        inverted_index_snii_section_file_cache_blocks_miss[i] = add_snii_section_counter(
-                profile, kSniiSectionNames[i], "FileCacheBlocksMiss", TUnit::UNIT, cache_profile);
-    }
 }
 
 void FileCacheProfileReporter::update(const FileCacheStatistics* statistics) const {
@@ -348,20 +297,6 @@ void FileCacheProfileReporter::update(const FileCacheStatistics* statistics) con
     COUNTER_UPDATE(inverted_index_range_read_count, statistics->inverted_index_range_read_count);
     COUNTER_UPDATE(inverted_index_serial_read_rounds,
                    statistics->inverted_index_serial_read_rounds);
-    for (size_t i = 0; i < SNII_SECTION_COUNT; ++i) {
-        COUNTER_UPDATE(inverted_index_snii_section_read_bytes[i],
-                       statistics->inverted_index_snii_section_read_bytes[i]);
-        COUNTER_UPDATE(inverted_index_snii_section_remote_physical_read_bytes[i],
-                       statistics->inverted_index_snii_section_remote_physical_read_bytes[i]);
-        COUNTER_UPDATE(inverted_index_snii_section_bytes_write_into_cache[i],
-                       statistics->inverted_index_snii_section_bytes_write_into_cache[i]);
-        COUNTER_UPDATE(inverted_index_snii_section_file_cache_blocks_total[i],
-                       statistics->inverted_index_snii_section_file_cache_blocks_total[i]);
-        COUNTER_UPDATE(inverted_index_snii_section_file_cache_blocks_hit[i],
-                       statistics->inverted_index_snii_section_file_cache_blocks_hit[i]);
-        COUNTER_UPDATE(inverted_index_snii_section_file_cache_blocks_miss[i],
-                       statistics->inverted_index_snii_section_file_cache_blocks_miss[i]);
-    }
 }
 
 } // namespace doris::io

@@ -83,7 +83,7 @@ private:
                                 ReadStatistics& stats, const IOContext* io_ctx);
 
     void _update_stats(const ReadStatistics& stats, FileCacheStatistics* state,
-                       bool is_inverted_index, uint8_t snii_section_type) const;
+                       bool is_inverted_index) const;
 
     bool _is_doris_table = false;
     int64_t _tablet_id = -1;

@@ -120,18 +120,6 @@ struct FileCacheProfileReporter {
     RuntimeProfile::Counter* inverted_index_read_bytes = nullptr;
     RuntimeProfile::Counter* inverted_index_range_read_count = nullptr;
     RuntimeProfile::Counter* inverted_index_serial_read_rounds = nullptr;
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_read_bytes {};
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_remote_physical_read_bytes {};
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_bytes_write_into_cache {};
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_file_cache_blocks_total {};
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_file_cache_blocks_hit {};
-    std::array<RuntimeProfile::Counter*, SNII_SECTION_COUNT>
-            inverted_index_snii_section_file_cache_blocks_miss {};
 
     FileCacheProfileReporter(RuntimeProfile* profile);
     void update(const FileCacheStatistics* statistics) const;
