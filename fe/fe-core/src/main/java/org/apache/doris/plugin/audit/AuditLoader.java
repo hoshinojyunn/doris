@@ -180,6 +180,8 @@ public class AuditLoader extends Plugin implements AuditPlugin {
         logBuffer.append(event.spillReadBytesFromLocalStorage).append(AUDIT_TABLE_COL_SEPARATOR);
         logBuffer.append(event.scanBytesFromLocalStorage).append(AUDIT_TABLE_COL_SEPARATOR);
         logBuffer.append(event.scanBytesFromRemoteStorage).append(AUDIT_TABLE_COL_SEPARATOR);
+        logBuffer.append(event.invertedIndexBytesFromRemoteStorage).append(AUDIT_TABLE_COL_SEPARATOR);
+        logBuffer.append(event.segmentFooterIndexBytesFromRemoteStorage).append(AUDIT_TABLE_COL_SEPARATOR);
 
         // plan info
         logBuffer.append(event.parseTimeMs).append(AUDIT_TABLE_COL_SEPARATOR);
@@ -287,4 +289,3 @@ public class AuditLoader extends Plugin implements AuditPlugin {
         }
     }
 }
-

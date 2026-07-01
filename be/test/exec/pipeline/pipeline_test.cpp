@@ -1238,6 +1238,20 @@ TEST_F(PipelineTest, QueryTaskProgressThriftSerialization) {
     EXPECT_EQ(tqs.finished_tasks_num, 4);
 }
 
+TEST_F(PipelineTest, QueryRemoteIndexStatsThriftSerialization) {
+    _query_ctx->resource_ctx()->io_context()->update_inverted_index_bytes_from_remote_storage(123);
+    _query_ctx->resource_ctx()->io_context()->update_segment_footer_index_bytes_from_remote_storage(
+            456);
+
+    TQueryStatistics tqs;
+    _query_ctx->resource_ctx()->to_thrift_query_statistics(&tqs);
+
+    EXPECT_TRUE(tqs.__isset.inverted_index_bytes_from_remote_storage);
+    EXPECT_EQ(tqs.inverted_index_bytes_from_remote_storage, 123);
+    EXPECT_TRUE(tqs.__isset.segment_footer_index_bytes_from_remote_storage);
+    EXPECT_EQ(tqs.segment_footer_index_bytes_from_remote_storage, 456);
+}
+
 TEST_F(PipelineTest, QueryTaskProgressBoundaryZeroTotal) {
     // Verify behavior when no tasks have been registered (total = 0).
     auto* ctrl = dynamic_cast<QueryTaskController*>(_query_ctx->resource_ctx()->task_controller());

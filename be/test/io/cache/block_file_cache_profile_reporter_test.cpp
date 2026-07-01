@@ -56,6 +56,9 @@ io::FileCacheStatistics make_file_cache_stats(int64_t multiplier) {
     stats.inverted_index_read_bytes = multiplier * 30;
     stats.inverted_index_range_read_count = multiplier * 31;
     stats.inverted_index_serial_read_rounds = multiplier * 32;
+    stats.segment_footer_index_num_remote_io_total = multiplier * 33;
+    stats.segment_footer_index_bytes_read_from_remote = multiplier * 34;
+    stats.segment_footer_index_remote_io_timer = multiplier * 35;
     return stats;
 }
 
@@ -97,6 +100,12 @@ void expect_file_cache_stats_eq(const io::FileCacheStatistics& actual,
     EXPECT_EQ(actual.inverted_index_read_bytes, expected.inverted_index_read_bytes);
     EXPECT_EQ(actual.inverted_index_range_read_count, expected.inverted_index_range_read_count);
     EXPECT_EQ(actual.inverted_index_serial_read_rounds, expected.inverted_index_serial_read_rounds);
+    EXPECT_EQ(actual.segment_footer_index_num_remote_io_total,
+              expected.segment_footer_index_num_remote_io_total);
+    EXPECT_EQ(actual.segment_footer_index_bytes_read_from_remote,
+              expected.segment_footer_index_bytes_read_from_remote);
+    EXPECT_EQ(actual.segment_footer_index_remote_io_timer,
+              expected.segment_footer_index_remote_io_timer);
 }
 
 } // namespace
@@ -150,6 +159,8 @@ TEST(FileCacheProfileReporterTest, ReporterAggregatesDeltaReportsToExactFinalTot
               after_second_report.inverted_index_range_read_count);
     EXPECT_EQ(profile->get_counter("InvertedIndexSerialReadRounds")->value(),
               after_second_report.inverted_index_serial_read_rounds);
+    EXPECT_EQ(profile->get_counter("SegmentFooterIndexBytesScannedFromRemote")->value(),
+              after_second_report.segment_footer_index_bytes_read_from_remote);
 }
 
 } // namespace doris

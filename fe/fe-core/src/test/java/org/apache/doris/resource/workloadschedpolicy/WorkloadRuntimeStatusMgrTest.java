@@ -244,6 +244,24 @@ public class WorkloadRuntimeStatusMgrTest {
     }
 
     @Test
+    public void testMergeRemoteIndexStats() {
+        TQueryStatistics stats1 = buildStats(0, 0);
+        stats1.setInvertedIndexBytesFromRemoteStorage(100);
+        stats1.setSegmentFooterIndexBytesFromRemoteStorage(200);
+        mgr.updateBeQueryStats(buildParams(10001L, "q1", stats1));
+
+        TQueryStatistics stats2 = buildStats(0, 0);
+        stats2.setInvertedIndexBytesFromRemoteStorage(10);
+        stats2.setSegmentFooterIndexBytesFromRemoteStorage(20);
+        mgr.updateBeQueryStats(buildParams(10002L, "q1", stats2));
+
+        Map<String, TQueryStatistics> merged = getMergedSnapshot();
+        TQueryStatistics result = merged.get("q1");
+        Assert.assertEquals(110, result.getInvertedIndexBytesFromRemoteStorage());
+        Assert.assertEquals(220, result.getSegmentFooterIndexBytesFromRemoteStorage());
+    }
+
+    @Test
     public void testSnapshotReadRequiresRebuild() {
         mgr.updateBeQueryStats(buildParams(10001L, "q1", buildStats(6, 2)));
         // Newly reported data is not visible to sync readers before snapshot rebuild.

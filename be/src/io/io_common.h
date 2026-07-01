@@ -84,6 +84,10 @@ struct FileCacheStatistics {
     int64_t inverted_index_read_bytes = 0;
     int64_t inverted_index_range_read_count = 0;
     int64_t inverted_index_serial_read_rounds = 0;
+
+    int64_t segment_footer_index_num_remote_io_total = 0;
+    int64_t segment_footer_index_bytes_read_from_remote = 0;
+    int64_t segment_footer_index_remote_io_timer = 0;
 };
 
 struct IOContext {
@@ -101,6 +105,7 @@ struct IOContext {
     FileCacheStatistics* file_cache_stats = nullptr; // Ref
     FileReaderStats* file_reader_stats = nullptr;    // Ref
     bool is_inverted_index = false;
+    bool is_segment_footer = false;
     // if is_dryrun, read IO will download data to cache but return no data to reader
     // useful to skip cache data read from local disk to accelarate warm up
     bool is_dryrun = false;

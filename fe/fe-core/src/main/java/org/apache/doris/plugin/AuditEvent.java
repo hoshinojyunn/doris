@@ -108,6 +108,12 @@ public class AuditEvent {
     public long scanBytesFromLocalStorage = -1;
     @AuditField(value = "ScanBytesFromRemoteStorage", colName = "scan_bytes_from_remote_storage")
     public long scanBytesFromRemoteStorage = -1;
+    @AuditField(value = "InvertedIndexBytesFromRemoteStorage",
+            colName = "inverted_index_bytes_from_remote_storage")
+    public long invertedIndexBytesFromRemoteStorage = -1;
+    @AuditField(value = "SegmentFooterIndexBytesFromRemoteStorage",
+            colName = "segment_footer_index_bytes_from_remote_storage")
+    public long segmentFooterIndexBytesFromRemoteStorage = -1;
 
     // plan info
     @AuditField(value = "ParseTimeMs", colName = "parse_time_ms")
@@ -330,6 +336,16 @@ public class AuditEvent {
 
         public AuditEventBuilder setScanBytesFromRemoteStorage(long scanBytesFromRemoteStorage) {
             auditEvent.scanBytesFromRemoteStorage = scanBytesFromRemoteStorage;
+            return this;
+        }
+
+        public AuditEventBuilder setInvertedIndexBytesFromRemoteStorage(long bytes) {
+            auditEvent.invertedIndexBytesFromRemoteStorage = bytes;
+            return this;
+        }
+
+        public AuditEventBuilder setSegmentFooterIndexBytesFromRemoteStorage(long bytes) {
+            auditEvent.segmentFooterIndexBytesFromRemoteStorage = bytes;
             return this;
         }
 

@@ -449,7 +449,8 @@ Status Segment::_parse_footer(std::shared_ptr<SegmentFooterPB>& footer,
     size_t bytes_read = 0;
     // TODO(plat1ko): Support session variable `enable_file_cache`
     io::IOContext io_ctx {.is_index_data = true,
-                          .file_cache_stats = stats ? &stats->file_cache_stats : nullptr};
+                          .file_cache_stats = stats ? &stats->file_cache_stats : nullptr,
+                          .is_segment_footer = true};
     RETURN_IF_ERROR(
             _file_reader->read_at(file_size - 12, Slice(fixed_buf, 12), &bytes_read, &io_ctx));
     DCHECK_EQ(bytes_read, 12);

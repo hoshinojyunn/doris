@@ -76,6 +76,8 @@ class InternalSchemaInitializerTest {
     public void testAuditLogSchemaContainsStorageFields() {
         boolean hasLocalStorageField = false;
         boolean hasRemoteStorageField = false;
+        boolean hasInvertedIndexRemoteStorageField = false;
+        boolean hasSegmentFooterRemoteStorageField = false;
 
         for (ColumnDef columnDef : InternalSchema.AUDIT_SCHEMA) {
             if (columnDef.getName().equals("scan_bytes_from_local_storage")) {
@@ -89,11 +91,27 @@ class InternalSchemaInitializerTest {
                 Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
                 Assertions.assertTrue(columnDef.isAllowNull());
             }
+
+            if (columnDef.getName().equals("inverted_index_bytes_from_remote_storage")) {
+                hasInvertedIndexRemoteStorageField = true;
+                Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
+                Assertions.assertTrue(columnDef.isAllowNull());
+            }
+
+            if (columnDef.getName().equals("segment_footer_index_bytes_from_remote_storage")) {
+                hasSegmentFooterRemoteStorageField = true;
+                Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
+                Assertions.assertTrue(columnDef.isAllowNull());
+            }
         }
 
         Assertions.assertTrue(hasLocalStorageField, "scan_bytes_from_local_storage field is missing from AUDIT_SCHEMA");
         Assertions.assertTrue(hasRemoteStorageField,
                 "scan_bytes_from_remote_storage field is missing from AUDIT_SCHEMA");
+        Assertions.assertTrue(hasInvertedIndexRemoteStorageField,
+                "inverted_index_bytes_from_remote_storage field is missing from AUDIT_SCHEMA");
+        Assertions.assertTrue(hasSegmentFooterRemoteStorageField,
+                "segment_footer_index_bytes_from_remote_storage field is missing from AUDIT_SCHEMA");
     }
 
     @Test
@@ -102,6 +120,8 @@ class InternalSchemaInitializerTest {
 
         boolean hasLocalStorageField = false;
         boolean hasRemoteStorageField = false;
+        boolean hasInvertedIndexRemoteStorageField = false;
+        boolean hasSegmentFooterRemoteStorageField = false;
 
         for (ColumnDef columnDef : copiedSchema) {
             if (columnDef.getName().equals("scan_bytes_from_local_storage")) {
@@ -115,12 +135,28 @@ class InternalSchemaInitializerTest {
                 Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
                 Assertions.assertTrue(columnDef.isAllowNull());
             }
+
+            if (columnDef.getName().equals("inverted_index_bytes_from_remote_storage")) {
+                hasInvertedIndexRemoteStorageField = true;
+                Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
+                Assertions.assertTrue(columnDef.isAllowNull());
+            }
+
+            if (columnDef.getName().equals("segment_footer_index_bytes_from_remote_storage")) {
+                hasSegmentFooterRemoteStorageField = true;
+                Assertions.assertEquals(PrimitiveType.BIGINT, columnDef.getType().getPrimitiveType());
+                Assertions.assertTrue(columnDef.isAllowNull());
+            }
         }
 
         Assertions.assertTrue(hasLocalStorageField,
                 "scan_bytes_from_local_storage field is missing from the copied schema");
         Assertions.assertTrue(hasRemoteStorageField,
                 "scan_bytes_from_remote_storage field is missing from the copied schema");
+        Assertions.assertTrue(hasInvertedIndexRemoteStorageField,
+                "inverted_index_bytes_from_remote_storage field is missing from the copied schema");
+        Assertions.assertTrue(hasSegmentFooterRemoteStorageField,
+                "segment_footer_index_bytes_from_remote_storage field is missing from the copied schema");
     }
 
     @Test

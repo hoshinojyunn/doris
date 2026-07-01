@@ -856,6 +856,16 @@ void OlapScanner::update_realtime_counters() {
                 ->io_context()
                 ->update_scan_bytes_from_remote_storage(
                         stats.file_cache_stats.bytes_read_from_remote);
+        _state->get_query_ctx()
+                ->resource_ctx()
+                ->io_context()
+                ->update_inverted_index_bytes_from_remote_storage(
+                        stats.file_cache_stats.inverted_index_bytes_read_from_remote);
+        _state->get_query_ctx()
+                ->resource_ctx()
+                ->io_context()
+                ->update_segment_footer_index_bytes_from_remote_storage(
+                        stats.file_cache_stats.segment_footer_index_bytes_read_from_remote);
 
         DorisMetrics::instance()->query_scan_bytes_from_local->increment(
                 stats.file_cache_stats.bytes_read_from_local);

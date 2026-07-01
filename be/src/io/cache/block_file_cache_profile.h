@@ -103,6 +103,9 @@ struct FileCacheProfileReporter {
     RuntimeProfile::Counter* inverted_index_read_bytes = nullptr;
     RuntimeProfile::Counter* inverted_index_range_read_count = nullptr;
     RuntimeProfile::Counter* inverted_index_serial_read_rounds = nullptr;
+    RuntimeProfile::Counter* segment_footer_index_num_remote_io_total = nullptr;
+    RuntimeProfile::Counter* segment_footer_index_bytes_scanned_from_remote = nullptr;
+    RuntimeProfile::Counter* segment_footer_index_remote_io_timer = nullptr;
 
     FileCacheProfileReporter(RuntimeProfile* profile);
     void update(const FileCacheStatistics* statistics) const;

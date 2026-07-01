@@ -39,6 +39,8 @@ public:
         RuntimeProfile::Counter* scan_bytes_counter_;
         RuntimeProfile::Counter* scan_bytes_from_local_storage_counter_;
         RuntimeProfile::Counter* scan_bytes_from_remote_storage_counter_;
+        RuntimeProfile::Counter* inverted_index_bytes_from_remote_storage_counter_;
+        RuntimeProfile::Counter* segment_footer_index_bytes_from_remote_storage_counter_;
         RuntimeProfile::Counter* bytes_write_into_cache_counter_;
 
         // number rows returned by query.
@@ -60,6 +62,10 @@ public:
                     ADD_COUNTER(profile_, "ScanBytesFromLocalStorage", TUnit::BYTES);
             scan_bytes_from_remote_storage_counter_ =
                     ADD_COUNTER(profile_, "ScanBytesFromRemoteStorage", TUnit::BYTES);
+            inverted_index_bytes_from_remote_storage_counter_ =
+                    ADD_COUNTER(profile_, "InvertedIndexBytesFromRemoteStorage", TUnit::BYTES);
+            segment_footer_index_bytes_from_remote_storage_counter_ =
+                    ADD_COUNTER(profile_, "SegmentFooterIndexBytesFromRemoteStorage", TUnit::BYTES);
             bytes_write_into_cache_counter_ =
                     ADD_COUNTER(profile_, "BytesWriteIntoCache", TUnit::BYTES);
             returned_rows_counter_ = ADD_COUNTER(profile_, "ReturnedRows", TUnit::UNIT);
@@ -91,6 +97,12 @@ public:
     int64_t scan_bytes_from_remote_storage() const {
         return stats_.scan_bytes_from_remote_storage_counter_->value();
     }
+    int64_t inverted_index_bytes_from_remote_storage() const {
+        return stats_.inverted_index_bytes_from_remote_storage_counter_->value();
+    }
+    int64_t segment_footer_index_bytes_from_remote_storage() const {
+        return stats_.segment_footer_index_bytes_from_remote_storage_counter_->value();
+    }
     int64_t bytes_write_into_cache() const {
         return stats_.bytes_write_into_cache_counter_->value();
     }
@@ -114,6 +126,12 @@ public:
     }
     void update_scan_bytes_from_remote_storage(int64_t delta) const {
         stats_.scan_bytes_from_remote_storage_counter_->update(delta);
+    }
+    void update_inverted_index_bytes_from_remote_storage(int64_t delta) const {
+        stats_.inverted_index_bytes_from_remote_storage_counter_->update(delta);
+    }
+    void update_segment_footer_index_bytes_from_remote_storage(int64_t delta) const {
+        stats_.segment_footer_index_bytes_from_remote_storage_counter_->update(delta);
     }
     void update_bytes_write_into_cache(int64_t delta) const {
         stats_.bytes_write_into_cache_counter_->update(delta);

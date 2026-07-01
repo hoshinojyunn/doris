@@ -363,6 +363,8 @@ public class InternalSchemaInitializer extends Thread {
          *   `spill_read_bytes_from_local_storage` bigint NULL COMMENT "",
          *   `scan_bytes_from_local_storage` bigint NULL COMMENT "",
          *   `scan_bytes_from_remote_storage` bigint NULL COMMENT "",
+         *   `inverted_index_bytes_from_remote_storage` bigint NULL COMMENT "",
+         *   `segment_footer_index_bytes_from_remote_storage` bigint NULL COMMENT "",
          *   `parse_time_ms` int NULL COMMENT "",
          *   `plan_times_ms` map<text,int> NULL COMMENT "",
          *   `get_meta_times_ms` map<text,int> NULL COMMENT "",

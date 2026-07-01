@@ -326,12 +326,14 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
         if (!io_ctx->is_warmup) {
             // update stats increment in this reading procedure for file cache metrics
             FileCacheStatistics fcache_stats_increment;
-            _update_stats(stats, &fcache_stats_increment, io_ctx->is_inverted_index);
+            _update_stats(stats, &fcache_stats_increment, io_ctx->is_inverted_index,
+                          io_ctx->is_segment_footer);
             io::FileCacheMetrics::instance().update(&fcache_stats_increment);
         }
         if (io_ctx->file_cache_stats) {
             // update stats in io_ctx, for query profile
-            _update_stats(stats, io_ctx->file_cache_stats, io_ctx->is_inverted_index);
+            _update_stats(stats, io_ctx->file_cache_stats, io_ctx->is_inverted_index,
+                          io_ctx->is_segment_footer);
         }
     };
     std::unique_ptr<int, decltype(defer_func)> defer((int*)0x01, std::move(defer_func));
@@ -612,8 +614,8 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
 }
 
 void CachedRemoteFileReader::_update_stats(const ReadStatistics& read_stats,
-                                           FileCacheStatistics* statis,
-                                           bool is_inverted_index) const {
+                                           FileCacheStatistics* statis, bool is_inverted_index,
+                                           bool is_segment_footer) const {
     if (statis == nullptr) {
         return;
     }
@@ -661,6 +663,12 @@ void CachedRemoteFileReader::_update_stats(const ReadStatistics& read_stats,
         statis->inverted_index_remote_physical_read_bytes += read_stats.remote_physical_read_bytes;
         statis->inverted_index_bytes_write_into_cache += read_stats.bytes_write_into_file_cache;
         statis->inverted_index_local_io_timer += read_stats.local_read_timer;
+    }
+
+    if (is_segment_footer && read_stats.bytes_read_from_remote > 0) {
+        statis->segment_footer_index_num_remote_io_total++;
+        statis->segment_footer_index_bytes_read_from_remote += read_stats.bytes_read_from_remote;
+        statis->segment_footer_index_remote_io_timer += read_stats.remote_read_timer;
     }
 
     g_skip_cache_sum << read_stats.skip_cache;

@@ -268,6 +268,10 @@ public class AuditLogHelper {
                         statistics.getScanBytesFromLocalStorage())
                 .setScanBytesFromRemoteStorage(statistics == null ? 0 :
                         statistics.getScanBytesFromRemoteStorage())
+                .setInvertedIndexBytesFromRemoteStorage(statistics == null ? 0 :
+                        statistics.getInvertedIndexBytesFromRemoteStorage())
+                .setSegmentFooterIndexBytesFromRemoteStorage(statistics == null ? 0 :
+                        statistics.getSegmentFooterIndexBytesFromRemoteStorage())
                 .setFuzzyVariables(!printFuzzyVariables ? "" : ctx.getSessionVariable().printFuzzyVariables())
                 .setCommandType(ctx.getCommand().toString())
                 .setStmtType(stmtType)
@@ -363,7 +367,11 @@ public class AuditLogHelper {
             auditEventBuilder.setScanBytesFromLocalStorage(
                             statistics == null ? 0 : statistics.getScanBytesFromLocalStorage())
                     .setScanBytesFromRemoteStorage(
-                            statistics == null ? 0 : statistics.getScanBytesFromRemoteStorage());
+                            statistics == null ? 0 : statistics.getScanBytesFromRemoteStorage())
+                    .setInvertedIndexBytesFromRemoteStorage(
+                            statistics == null ? 0 : statistics.getInvertedIndexBytesFromRemoteStorage())
+                    .setSegmentFooterIndexBytesFromRemoteStorage(statistics == null ? 0
+                            : statistics.getSegmentFooterIndexBytesFromRemoteStorage());
         }
 
         boolean isSyntaxErr = ctx.getState().getStateType() == MysqlStateType.ERR
@@ -512,4 +520,3 @@ public class AuditLogHelper {
         }
     }
 }
-
