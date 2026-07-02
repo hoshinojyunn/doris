@@ -1,5 +1,22 @@
 # SNII 与 V3 Clucene 倒排索引读性能测试计划
 
+## 0. 推荐部署模式
+
+本次 benchmark 建议直接使用单机 `cloud mode`，不建议继续在当前 `local mode` 集群上做主测试。
+
+原因很直接：
+
+- 本次要对比的是“远端对象存储上的倒排索引读 + file cache 回写/命中 + searcher cache 命中”
+- `cloud mode` 原生具备 `storage vault`、remote read、file cache、meta service 这一整套路径
+- 当前 `local mode` 环境里，`SHOW STORAGE VAULT` 不可用，且 file cache 相关开关默认未打开，不适合作为 `pure cold / writeback cold / warm / hot` 四态 benchmark 基线
+
+因此，后续执行建议固定为：
+
+- 使用当前 worktree 编译产物下的 `output/ms`、`output/fe`、`output/be`
+- 以 `regression-test/pipeline/cloud_p0/` 的单机 cloud 配置为参考
+- FE/BE 端口、网络、日志目录等，可吸收 `~/doris_conf/fe.conf` 与 `~/doris_conf/be1.conf` 里的现有配置
+- 文件缓存、对象存储、warehouse、storage vault 等 cloud 专属配置，以 cloud mode 要求为准
+
 ## 1. 目标
 
 目标是在同一套 Doris 环境、同一批数据、同一套表结构和索引定义下，对比 `SNII` 与 `V3` Clucene 倒排索引的读性能差异，重点覆盖以下 4 种读状态：
