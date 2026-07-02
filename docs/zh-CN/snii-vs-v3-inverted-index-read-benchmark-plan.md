@@ -17,6 +17,31 @@
 - FE/BE 端口、网络、日志目录等，可吸收 `~/doris_conf/fe.conf` 与 `~/doris_conf/be1.conf` 里的现有配置
 - 文件缓存、对象存储、warehouse、storage vault 等 cloud 专属配置，以 cloud mode 要求为准
 
+## 0.1 当前已验证的可运行方案
+
+当前 worktree 上已经验证通过的最小可复现方案如下：
+
+- 元数据与计算存储仍使用单机 `cloud mode`
+- 实例对象存储采用 legacy `obj_info` 模式，而不是 `storage vault` 模式
+- 因此 `SHOW STORAGE VAULT` 可能返回 `Your cloud instance doesn't support storage vault`，这不影响 remote object store + file cache benchmark
+- 远端对象存储建议优先使用本机 S3 兼容服务（例如 MinIO），避免外部 OSS/S3 endpoint、region、SDK 兼容性把主结论污染掉
+
+建议的本机 S3 兼容配置：
+
+- endpoint: `127.0.0.1:39000`
+- bucket: `snii-bench`
+- prefix: `regression-test/snii`
+- provider: `S3`
+- region: `us-east-1`
+- `use_path_style = true`
+
+如果必须使用外部 OSS / COS / S3，请在正式 benchmark 前先单独完成以下验证：
+
+- FE/BE 都能稳定访问 endpoint
+- endpoint 与 region 组合正确
+- Doris 当前构建所携带的 AWS SDK / libcurl 组合可以稳定完成 `PUT` / `GET`
+- 小样本 stream load 已经成功，且 BE 日志里能看到远端 `put_object` 成功
+
 ## 1. 目标
 
 目标是在同一套 Doris 环境、同一批数据、同一套表结构和索引定义下，对比 `SNII` 与 `V3` Clucene 倒排索引的读性能差异，重点覆盖以下 4 种读状态：
