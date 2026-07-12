@@ -19,6 +19,7 @@
 #include <CLucene/index/MultiReader.h>
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <memory>
 #include <roaring/roaring.hh>
 #include <string>
@@ -29,6 +30,7 @@
 #include "storage/index/inverted/analyzer/custom_analyzer.h"
 #include "storage/index/inverted/query_v2/collect/doc_set_collector.h"
 #include "storage/index/inverted/query_v2/collect/multi_segment_util.h"
+#include "storage/index/inverted/similarity/bm25_similarity.h"
 #include "storage/index/inverted/query_v2/term_query/term_query.h"
 #include "storage/index/inverted/util/string_helper.h"
 
@@ -112,6 +114,33 @@ static std::shared_ptr<lucene::index::IndexReader> make_shared_reader(
             }};
 }
 
+static void assert_block_wand_matches_all_docs(
+        const std::shared_ptr<lucene::index::IndexReader>& reader, uint32_t expected_num_docs) {
+    auto index_query_context = std::make_shared<IndexQueryContext>();
+    auto field = StringHelper::to_wstring("title");
+    auto weight = std::make_shared<TermWeight>(
+            index_query_context, field, StringHelper::to_wstring("fleabag"),
+            std::make_shared<BM25Similarity>(1.0F, 1.0F), true);
+
+    QueryExecutionContext exec_ctx;
+    exec_ctx.segment_num_rows = reader->maxDoc();
+    exec_ctx.readers = {reader};
+    exec_ctx.field_reader_bindings.emplace(field, reader);
+
+    std::vector<uint32_t> docs;
+    weight->for_each_pruning(
+            exec_ctx, "", -std::numeric_limits<float>::infinity(),
+            [&docs](uint32_t doc_id, float /*score*/) {
+                docs.push_back(doc_id);
+                return -std::numeric_limits<float>::infinity();
+            });
+
+    ASSERT_EQ(docs.size(), expected_num_docs);
+    for (uint32_t doc_id = 0; doc_id < expected_num_docs; ++doc_id) {
+        EXPECT_EQ(docs[doc_id], doc_id);
+    }
+}
+
 TEST_F(MultiSegmentCollectorTest, CollectDocSetWithMultiReader) {
     auto* dir0 = FSDirectory::getDirectory((kTestDir + "/segment0").c_str());
     auto* dir1 = FSDirectory::getDirectory((kTestDir + "/segment1").c_str());
@@ -132,7 +161,8 @@ TEST_F(MultiSegmentCollectorTest, CollectDocSetWithMultiReader) {
     exec_ctx.field_reader_bindings.emplace(field, reader);
 
     auto roaring = std::make_shared<roaring::Roaring>();
-    ASSERT_NO_THROW(collect_multi_segment_doc_set(weight, exec_ctx, "", roaring, nullptr, false));
+    auto status = collect_multi_segment_doc_set(weight, exec_ctx, "", roaring, nullptr, false);
+    ASSERT_TRUE(status.ok()) << status;
 
     EXPECT_EQ(roaring->cardinality(), 2);
     EXPECT_TRUE(roaring->contains(0));
@@ -170,7 +200,8 @@ TEST_F(MultiSegmentCollectorTest, CollectDocSetWithSegmentedFieldBinding) {
     exec_ctx.field_reader_bindings.emplace(field, field_reader);
 
     auto roaring = std::make_shared<roaring::Roaring>();
-    ASSERT_NO_THROW(collect_multi_segment_doc_set(weight, exec_ctx, "", roaring, nullptr, false));
+    auto status = collect_multi_segment_doc_set(weight, exec_ctx, "", roaring, nullptr, false);
+    ASSERT_TRUE(status.ok()) << status;
 
     EXPECT_EQ(roaring->cardinality(), 2);
     EXPECT_TRUE(roaring->contains(0));
@@ -203,14 +234,49 @@ TEST_F(MultiSegmentCollectorTest, CollectDocSetWithSingleReaderBinding) {
     exec_ctx.field_reader_bindings.emplace(field, field_reader);
 
     auto roaring = std::make_shared<roaring::Roaring>();
-    ASSERT_NO_THROW(collect_multi_segment_doc_set(weight, exec_ctx, "bound-title", roaring, nullptr,
-                                                  false));
+    auto status =
+            collect_multi_segment_doc_set(weight, exec_ctx, "bound-title", roaring, nullptr, false);
+    ASSERT_TRUE(status.ok()) << status;
 
     EXPECT_EQ(roaring->cardinality(), 1);
     EXPECT_TRUE(roaring->contains(0));
 
     _CLDECDELETE(dir0);
     _CLDECDELETE(dir1);
+}
+
+TEST_F(MultiSegmentCollectorTest, BlockWandWithMultiReader) {
+    const auto docs = std::vector<std::string>(1024, "fleabag");
+    create_test_index(kTestDir + "/segment0", docs);
+    create_test_index(kTestDir + "/segment1", docs);
+
+    auto* dir0 = FSDirectory::getDirectory((kTestDir + "/segment0").c_str());
+    auto* dir1 = FSDirectory::getDirectory((kTestDir + "/segment1").c_str());
+    ValueArray<lucene::index::IndexReader*> readers(2);
+    readers[0] = lucene::index::IndexReader::open(dir0, true);
+    readers[1] = lucene::index::IndexReader::open(dir1, true);
+    auto reader = make_shared_reader(_CLNEW lucene::index::MultiReader(&readers, true));
+
+    assert_block_wand_matches_all_docs(reader, 2048);
+
+    _CLDECDELETE(dir0);
+    _CLDECDELETE(dir1);
+}
+
+TEST_F(MultiSegmentCollectorTest, BlockWandWithMultiSegmentReader) {
+    const auto multi_segment_dir = kTestDir + "/multi_segment";
+    ASSERT_TRUE(io::global_local_filesystem()->create_directory(multi_segment_dir).ok());
+    create_test_index(multi_segment_dir, std::vector<std::string>(1024, "fleabag"), 512);
+
+    auto* dir = FSDirectory::getDirectory(multi_segment_dir.c_str());
+    auto reader = make_shared_reader(lucene::index::IndexReader::open(dir, true));
+    const auto* segments = sub_readers(reader.get());
+    ASSERT_NE(segments, nullptr);
+    ASSERT_GT(segments->length, 1);
+
+    assert_block_wand_matches_all_docs(reader, 1024);
+
+    _CLDECDELETE(dir);
 }
 
 } // namespace doris::segment_v2

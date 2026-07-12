@@ -25,9 +25,10 @@
 
 namespace doris::segment_v2::inverted_index::query_v2 {
 
-void collect_multi_segment_doc_set(const WeightPtr& weight, const QueryExecutionContext& context,
-                                   const std::string& binding_key,
-                                   const std::shared_ptr<roaring::Roaring>& roaring,
-                                   const CollectionSimilarityPtr& similarity, bool enable_scoring);
+Status collect_multi_segment_doc_set(const WeightPtr& weight, const QueryExecutionContext& context,
+                                     const std::string& binding_key,
+                                     const std::shared_ptr<roaring::Roaring>& roaring,
+                                     const CollectionSimilarityPtr& similarity,
+                                     bool enable_scoring);
 
 } // namespace doris::segment_v2::inverted_index::query_v2

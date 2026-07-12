@@ -19,6 +19,7 @@
 
 #include <CLucene.h>
 
+#include "common/exception.h"
 #include "common/logging.h"
 #include "storage/index/inverted/inverted_index_common.h"
 
@@ -37,6 +38,24 @@ TermDocsPtr make_term_doc_ptr(lucene::index::IndexReader* reader, Args&&... args
 template <typename... Args>
 TermPositionsPtr make_term_positions_ptr(lucene::index::IndexReader* reader, Args&&... args) {
     return TermPositionsPtr(reader->termPositions(std::forward<Args>(args)...));
+}
+
+inline bool read_clucene_doc_range(lucene::index::TermDocs* term_docs, DocRange* doc_range) {
+    try {
+        return term_docs->readRange(doc_range);
+    } catch (const CLuceneError& e) {
+        throw Exception(ErrorCode::INVERTED_INDEX_CLUCENE_ERROR, "CLucene readRange failed: {}",
+                        e.what());
+    }
+}
+
+inline bool read_clucene_doc_block(lucene::index::TermDocs* term_docs, DocRange* doc_range) {
+    try {
+        return term_docs->readBlock(doc_range);
+    } catch (const CLuceneError& e) {
+        throw Exception(ErrorCode::INVERTED_INDEX_CLUCENE_ERROR, "CLucene readBlock failed: {}",
+                        e.what());
+    }
 }
 
 template <typename PtrType>

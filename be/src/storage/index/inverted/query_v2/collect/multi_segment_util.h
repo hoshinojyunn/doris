@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "common/check.h"
 #include "storage/index/inverted/query_v2/weight.h"
 
 #ifdef __clang__

@@ -21,6 +21,8 @@
 #include <memory>
 #include <string>
 
+class DocRange;
+
 namespace lucene {
 namespace store {
 class Directory;
@@ -61,6 +63,9 @@ TermDocsPtr make_term_doc_ptr(lucene::index::IndexReader* reader, Args&&... args
 
 template <typename... Args>
 TermPositionsPtr make_term_positions_ptr(lucene::index::IndexReader* reader, Args&&... args);
+
+bool read_clucene_doc_range(lucene::index::TermDocs* term_docs, DocRange* doc_range);
+bool read_clucene_doc_block(lucene::index::TermDocs* term_docs, DocRange* doc_range);
 
 struct ErrorContext {
     std::string err_msg;

@@ -215,7 +215,7 @@ public:
 
 private:
     bool _refill() {
-        if (!_raw_iter->readBlock(&_block)) {
+        if (!read_clucene_doc_block(_raw_iter, &_block)) {
             return false;
         }
         _cursor = 0;

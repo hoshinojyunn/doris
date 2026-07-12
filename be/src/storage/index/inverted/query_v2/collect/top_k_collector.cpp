@@ -21,34 +21,41 @@
 
 namespace doris::segment_v2::inverted_index::query_v2 {
 
-void collect_multi_segment_top_k(const WeightPtr& weight, const QueryExecutionContext& context,
-                                 const std::string& binding_key, size_t k,
-                                 const std::shared_ptr<roaring::Roaring>& roaring,
-                                 const CollectionSimilarityPtr& similarity, bool use_wand) {
+Status collect_multi_segment_top_k(const WeightPtr& weight, const QueryExecutionContext& context,
+                                   const std::string& binding_key, size_t k,
+                                   const std::shared_ptr<roaring::Roaring>& roaring,
+                                   const CollectionSimilarityPtr& similarity, bool use_wand) {
     TopKCollector final_collector(k);
 
-    for_each_index_segment(
-            context, binding_key, [&](const QueryExecutionContext& seg_ctx, uint32_t seg_base) {
-                float initial_threshold = final_collector.threshold();
+    try {
+        for_each_index_segment(
+                context, binding_key, [&](const QueryExecutionContext& seg_ctx, uint32_t seg_base) {
+                    float initial_threshold = final_collector.threshold();
 
-                TopKCollector seg_collector(k);
-                auto callback = [&seg_collector](uint32_t doc_id, float score) -> float {
-                    return seg_collector.collect(doc_id, score);
-                };
+                    TopKCollector seg_collector(k);
+                    auto callback = [&seg_collector](uint32_t doc_id, float score) -> float {
+                        return seg_collector.collect(doc_id, score);
+                    };
 
-                if (use_wand) {
-                    weight->for_each_pruning(seg_ctx, binding_key, initial_threshold, callback);
-                } else {
-                    auto scorer = weight->scorer(seg_ctx, binding_key);
-                    if (scorer) {
-                        Weight::for_each_pruning_scorer(scorer, initial_threshold, callback);
+                    if (use_wand) {
+                        weight->for_each_pruning(seg_ctx, binding_key, initial_threshold, callback);
+                    } else {
+                        auto scorer = weight->scorer(seg_ctx, binding_key);
+                        if (scorer) {
+                            Weight::for_each_pruning_scorer(scorer, initial_threshold, callback);
+                        }
                     }
-                }
 
-                for (const auto& doc : seg_collector.into_sorted_vec()) {
-                    final_collector.collect(doc.doc_id + seg_base, doc.score);
-                }
-            });
+                    for (const auto& doc : seg_collector.into_sorted_vec()) {
+                        final_collector.collect(doc.doc_id + seg_base, doc.score);
+                    }
+                });
+    } catch (const CLuceneError& e) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_CLUCENE_ERROR>(
+                "CLucene error while collecting multi-segment top-k: {}", e.what());
+    } catch (const Exception& e) {
+        return e.to_status();
+    }
 
     for (const auto& doc : final_collector.into_sorted_vec()) {
         roaring->add(doc.doc_id);
@@ -56,6 +63,7 @@ void collect_multi_segment_top_k(const WeightPtr& weight, const QueryExecutionCo
             similarity->collect(doc.doc_id, doc.score);
         }
     }
+    return Status::OK();
 }
 
 } // namespace doris::segment_v2::inverted_index::query_v2

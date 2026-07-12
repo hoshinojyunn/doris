@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "CLucene/index/DocRange.h"
+#include "storage/index/inverted/util/term_iterator.h"
 
 namespace doris::segment_v2::inverted_index::query_v2 {
 
@@ -155,7 +156,38 @@ private:
     bool _read_done = false;
 };
 
+class ThrowingReadRangeTermDocs final : public MockTermDocs {
+public:
+    ThrowingReadRangeTermDocs() : MockTermDocs({}, {}, {}, 0) {}
+
+    bool readRange(DocRange* /*doc_range*/) override {
+        _CLTHROWA(CL_ERR_UnsupportedOperation, "readRange test error");
+    }
+};
+
+class ThrowingReadBlockTermDocs final : public MockTermDocs {
+public:
+    ThrowingReadBlockTermDocs() : MockTermDocs({}, {}, {}, 0) {}
+
+    bool readBlock(DocRange* /*doc_range*/) override {
+        _CLTHROWA(CL_ERR_UnsupportedOperation, "readBlock test error");
+    }
+};
+
 class SegmentPostingsTest : public testing::Test {};
+
+TEST_F(SegmentPostingsTest, ConvertsReadRangeErrorToDorisException) {
+    TermIterator iterator({}, TermDocsPtr(new ThrowingReadRangeTermDocs()));
+    DocRange doc_range;
+
+    EXPECT_THROW(iterator.read_range(&doc_range), Exception);
+}
+
+TEST_F(SegmentPostingsTest, ConvertsReadBlockErrorToDorisException) {
+    TermDocsPtr iterator(new ThrowingReadBlockTermDocs());
+
+    EXPECT_THROW(SegmentPostings(std::move(iterator), false, nullptr), Exception);
+}
 
 TEST_F(SegmentPostingsTest, test_postings_positions_with_offset) {
     class TestPostings : public Postings {

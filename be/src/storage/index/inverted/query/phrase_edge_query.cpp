@@ -26,6 +26,7 @@
 #include "CLucene/config/repl_wchar.h"
 #include "CLucene/util/stringUtil.h"
 #include "common/logging.h"
+#include "storage/index/inverted/inverted_index_common.h"
 
 namespace doris::segment_v2 {
 
@@ -63,7 +64,7 @@ void PhraseEdgeQuery::search_one_term(roaring::Roaring& roaring) {
         DocRange doc_range;
         TermDocs* term_doc = _searcher->getReader()->termDocs(term);
         roaring::Roaring result;
-        while (term_doc->readRange(&doc_range)) {
+        while (read_clucene_doc_range(term_doc, &doc_range)) {
             if (doc_range.type_ == DocRangeType::kMany) {
                 result.addMany(doc_range.doc_many_size_, doc_range.doc_many->data());
             } else {

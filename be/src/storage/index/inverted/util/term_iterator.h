@@ -72,7 +72,7 @@ public:
     MOCK_FUNCTION int32_t doc_freq() const { return term_docs_->docFreq(); }
 
     MOCK_FUNCTION bool read_range(DocRange* docRange) const {
-        return term_docs_->readRange(docRange);
+        return read_clucene_doc_range(term_docs_.get(), docRange);
     }
 
     static TermIterPtr create(const io::IOContext* io_ctx, bool is_similarity,

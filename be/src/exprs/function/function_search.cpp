@@ -414,14 +414,14 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
             bool use_wand = index_query_context->runtime_state != nullptr &&
                             index_query_context->runtime_state->query_options()
                                     .enable_inverted_index_wand_query;
-            query_v2::collect_multi_segment_top_k(
+            RETURN_IF_ERROR(query_v2::collect_multi_segment_top_k(
                     weight, exec_ctx, root_binding_key, top_k, roaring,
-                    index_query_context->collection_similarity, use_wand);
+                    index_query_context->collection_similarity, use_wand));
         } else {
-            query_v2::collect_multi_segment_doc_set(
+            RETURN_IF_ERROR(query_v2::collect_multi_segment_doc_set(
                     weight, exec_ctx, root_binding_key, roaring,
                     index_query_context ? index_query_context->collection_similarity : nullptr,
-                    enable_scoring);
+                    enable_scoring));
         }
     }
 
