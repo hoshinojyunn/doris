@@ -38,6 +38,7 @@
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "exprs/function/search_rejected_doc_collector.h"
 #include "exprs/function/simple_function_factory.h"
 #include "exprs/function/variant_inverted_index_search.h"
 #include "exprs/vexpr_context.h"
@@ -328,11 +329,24 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
     OlapReaderStatistics* outer_stats = index_query_context ? index_query_context->stats : nullptr;
     SCOPED_RAW_TIMER(outer_stats ? &outer_stats->inverted_index_query_timer : &query_timer_dummy);
 
-    // DSL result cache only stores bitmap/null bitmap. It does not store BM25 scores,
-    // so score() queries must execute scorers to populate CollectionSimilarity.
+    SearchRejectedDocCollector rejected_doc_collector(
+            num_rows, index_query_context ? index_query_context->delete_bitmap : nullptr);
+    const auto excluded_docs = rejected_doc_collector.excluded_docs();
+    std::unordered_set<std::string> referenced_fields;
+    if (!is_nested_query) {
+        collect_referenced_fields(search_param.root, &referenced_fields);
+    }
+    auto collect_rejected_docs = [&]() -> Status {
+        for (const auto& field_name : referenced_fields) {
+            RETURN_IF_ERROR(rejected_doc_collector.add_referenced_field(field_name, iterators));
+        }
+        return Status::OK();
+    };
+
+    // DSL result cache stores the binary SEARCH result. Score queries must execute scorers to
+    // populate CollectionSimilarity, and SNII remains excluded because it owns query execution.
     const bool enable_scoring =
             index_query_context != nullptr && index_query_context->collection_similarity != nullptr;
-    // Also bypass the DSL cache when any referenced field is served by an SNII reader.
     auto* dsl_cache =
             enable_cache && !enable_scoring &&
                             !referenced_fields_contain_snii_reader(search_param.root, iterators)
@@ -364,21 +378,8 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
                     if (outer_stats) {
                         outer_stats->inverted_index_query_cache_hit++;
                     }
-                    // Also retrieve cached null bitmap for three-valued SQL logic
-                    // (needed by compound operators NOT, OR, AND in VCompoundPred)
-                    auto null_cache_key = InvertedIndexQueryCache::CacheKey {
-                            seg_prefix, "__search_dsl__", InvertedIndexQueryType::SEARCH_DSL_QUERY,
-                            dsl_sig + "__null"};
-                    InvertedIndexQueryCacheHandle null_cache_handle;
-                    std::shared_ptr<roaring::Roaring> null_bitmap;
-                    if (dsl_cache->lookup(null_cache_key, &null_cache_handle)) {
-                        null_bitmap = null_cache_handle.get_bitmap();
-                    }
-                    if (!null_bitmap) {
-                        null_bitmap = std::make_shared<roaring::Roaring>();
-                    }
-                    bitmap_result =
-                            InvertedIndexResultBitmap(cached_bitmap, std::move(null_bitmap));
+                    bitmap_result = InvertedIndexResultBitmap(cached_bitmap,
+                                                              std::make_shared<roaring::Roaring>());
                     return Status::OK();
                 }
             }
@@ -386,6 +387,13 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
                 outer_stats->inverted_index_query_cache_miss++;
             }
         }
+    }
+
+    RETURN_IF_ERROR(collect_rejected_docs());
+    if (rejected_doc_collector.is_reject_all()) {
+        bitmap_result = InvertedIndexResultBitmap(std::make_shared<roaring::Roaring>(),
+                                                  std::make_shared<roaring::Roaring>());
+        return Status::OK();
     }
 
     std::shared_ptr<IndexQueryContext> context;
@@ -435,9 +443,14 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
     {
         int64_t init_dummy = 0;
         SCOPED_RAW_TIMER(stats ? &stats->inverted_index_searcher_search_init_timer : &init_dummy);
-        RETURN_IF_ERROR(build_query_recursive(search_param.root, context, resolver, &root_query,
-                                              &root_binding_key, default_operator,
-                                              minimum_should_match, num_rows));
+        RETURN_IF_ERROR(build_query_recursive(
+                search_param.root, context, resolver, &root_query, &root_binding_key,
+                default_operator, minimum_should_match, num_rows, &rejected_doc_collector));
+    }
+    if (rejected_doc_collector.is_reject_all()) {
+        bitmap_result = InvertedIndexResultBitmap(std::make_shared<roaring::Roaring>(),
+                                                  std::make_shared<roaring::Roaring>());
+        return Status::OK();
     }
     if (root_query == nullptr) {
         LOG(INFO) << "search: Query tree resolved to empty query, dsl:"
@@ -447,9 +460,8 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
         return Status::OK();
     }
 
-    VariantSearchNullBitmapAdapter null_resolver(resolver);
     query_v2::QueryExecutionContext exec_ctx =
-            build_variant_search_query_execution_context(num_rows, resolver, &null_resolver);
+            build_variant_search_query_execution_context(num_rows, resolver, nullptr);
 
     bool is_asc = false;
     size_t top_k = 0;
@@ -474,59 +486,26 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
             bool use_wand = index_query_context->runtime_state != nullptr &&
                             index_query_context->runtime_state->query_options()
                                     .enable_inverted_index_wand_query;
-            query_v2::collect_multi_segment_top_k(weight, exec_ctx, root_binding_key, top_k,
-                                                  roaring,
-                                                  index_query_context->collection_similarity,
-                                                  use_wand, index_query_context->delete_bitmap);
+            query_v2::collect_multi_segment_top_k(
+                    weight, exec_ctx, root_binding_key, top_k, roaring,
+                    index_query_context->collection_similarity, use_wand, excluded_docs);
         } else {
             query_v2::collect_multi_segment_doc_set(
                     weight, exec_ctx, root_binding_key, roaring,
                     index_query_context ? index_query_context->collection_similarity : nullptr,
-                    enable_scoring);
+                    enable_scoring, excluded_docs);
         }
     }
 
     VLOG_DEBUG << "search: Query completed, matched " << roaring->cardinality() << " documents";
 
-    // Extract NULL bitmap from three-valued logic scorer
-    // The scorer correctly computes which documents evaluate to NULL based on query logic
-    // For example: TRUE OR NULL = TRUE (not NULL), FALSE OR NULL = NULL
-    std::shared_ptr<roaring::Roaring> null_bitmap = std::make_shared<roaring::Roaring>();
-    if (exec_ctx.null_resolver) {
-        auto scorer = weight->scorer(exec_ctx, root_binding_key);
-        if (scorer && scorer->has_null_bitmap(exec_ctx.null_resolver)) {
-            const auto* bitmap = scorer->get_null_bitmap(exec_ctx.null_resolver);
-            if (bitmap != nullptr) {
-                *null_bitmap = *bitmap;
-                VLOG_TRACE << "search: Extracted NULL bitmap with " << null_bitmap->cardinality()
-                           << " NULL documents";
-            }
-        }
-    }
+    bitmap_result =
+            InvertedIndexResultBitmap(std::move(roaring), std::make_shared<roaring::Roaring>());
 
-    VLOG_TRACE << "search: Before mask - true_bitmap=" << roaring->cardinality()
-               << ", null_bitmap=" << null_bitmap->cardinality();
-
-    // Create result and mask out NULLs (SQL WHERE clause semantics: only TRUE rows)
-    bitmap_result = InvertedIndexResultBitmap(std::move(roaring), std::move(null_bitmap));
-    bitmap_result.mask_out_null();
-
-    VLOG_TRACE << "search: After mask - result_bitmap="
-               << bitmap_result.get_data_bitmap()->cardinality();
-
-    // Insert post-mask_out_null result into DSL cache for future reuse
-    // Cache both data bitmap and null bitmap so compound operators (NOT, OR, AND)
-    // can apply correct three-valued SQL logic on cache hit
+    // Cache only the binary result; SEARCH no longer exposes a query NULL bitmap.
     if (dsl_cache && cache_usable) {
         InvertedIndexQueryCacheHandle insert_handle;
         dsl_cache->insert(dsl_cache_key, bitmap_result.get_data_bitmap(), &insert_handle);
-        if (bitmap_result.get_null_bitmap()) {
-            auto null_cache_key = InvertedIndexQueryCache::CacheKey {
-                    seg_prefix, "__search_dsl__", InvertedIndexQueryType::SEARCH_DSL_QUERY,
-                    dsl_sig + "__null"};
-            InvertedIndexQueryCacheHandle null_insert_handle;
-            dsl_cache->insert(null_cache_key, bitmap_result.get_null_bitmap(), &null_insert_handle);
-        }
     }
 
     return Status::OK();
@@ -645,7 +624,7 @@ Status FunctionSearch::build_query_recursive(
         const TSearchClause& clause, const std::shared_ptr<IndexQueryContext>& context,
         FieldReaderResolver& resolver, inverted_index::query_v2::QueryPtr* out,
         std::string* binding_key, const std::string& default_operator, int32_t minimum_should_match,
-        uint32_t num_rows) const {
+        uint32_t num_rows, SearchRejectedDocCollector* rejected_doc_collector) const {
     DCHECK(out != nullptr);
     *out = nullptr;
     if (binding_key) {
@@ -673,9 +652,9 @@ Status FunctionSearch::build_query_recursive(
             for (const auto& child_clause : clause.children) {
                 query_v2::QueryPtr child_query;
                 std::string child_binding_key;
-                RETURN_IF_ERROR(build_query_recursive(child_clause, context, resolver, &child_query,
-                                                      &child_binding_key, default_operator,
-                                                      minimum_should_match, num_rows));
+                RETURN_IF_ERROR(build_query_recursive(
+                        child_clause, context, resolver, &child_query, &child_binding_key,
+                        default_operator, minimum_should_match, num_rows, rejected_doc_collector));
 
                 // Determine occur type from child clause
                 query_v2::Occur occur = query_v2::Occur::MUST; // default
@@ -709,9 +688,9 @@ Status FunctionSearch::build_query_recursive(
             for (const auto& child_clause : clause.children) {
                 query_v2::QueryPtr child_query;
                 std::string child_binding_key;
-                RETURN_IF_ERROR(build_query_recursive(child_clause, context, resolver, &child_query,
-                                                      &child_binding_key, default_operator,
-                                                      minimum_should_match, num_rows));
+                RETURN_IF_ERROR(build_query_recursive(
+                        child_clause, context, resolver, &child_query, &child_binding_key,
+                        default_operator, minimum_should_match, num_rows, rejected_doc_collector));
                 // Add all children including empty BitSetQuery
                 // BooleanQuery will handle the logic:
                 // - AND with empty bitmap → result is empty
@@ -726,16 +705,14 @@ Status FunctionSearch::build_query_recursive(
     }
 
     return build_leaf_query(clause, context, resolver, out, binding_key, default_operator,
-                            minimum_should_match, num_rows);
+                            minimum_should_match, num_rows, rejected_doc_collector);
 }
 
-Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
-                                        const std::shared_ptr<IndexQueryContext>& context,
-                                        FieldReaderResolver& resolver,
-                                        inverted_index::query_v2::QueryPtr* out,
-                                        std::string* binding_key,
-                                        const std::string& default_operator,
-                                        int32_t minimum_should_match, uint32_t num_rows) const {
+Status FunctionSearch::build_leaf_query(
+        const TSearchClause& clause, const std::shared_ptr<IndexQueryContext>& context,
+        FieldReaderResolver& resolver, inverted_index::query_v2::QueryPtr* out,
+        std::string* binding_key, const std::string& default_operator, int32_t minimum_should_match,
+        uint32_t num_rows, SearchRejectedDocCollector* rejected_doc_collector) const {
     DCHECK(out != nullptr);
     *out = nullptr;
     if (binding_key) {
@@ -771,6 +748,12 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
         *out = std::move(query);
         return resolver.map_leaf_query(field_name, out);
     };
+    auto reject_unknown_query = [&](std::string_view reason) -> Status {
+        if (rejected_doc_collector != nullptr) {
+            RETURN_IF_ERROR(rejected_doc_collector->reject_all(reason));
+        }
+        return finish_leaf_query(make_unknown_query(num_rows));
+    };
 
     FieldReaderBinding binding;
     const bool require_analyzer_context = clause_type != "WILDCARD" && clause_type != "REGEXP";
@@ -781,14 +764,11 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
     }
 
     if (!binding.is_bound()) {
-        LOG(INFO) << "search: No inverted index for field '" << field_name
-                  << "' in this segment, clause_type='" << clause_type
-                  << "', query_type=" << static_cast<int>(query_type)
-                  << ", returning UNKNOWN bitmap";
         if (binding_key) {
             binding_key->clear();
         }
-        return finish_leaf_query(make_unknown_query(num_rows));
+        return reject_unknown_query(fmt::format("field '{}' is unavailable for clause type '{}'",
+                                                field_name, clause_type));
     }
 
     if (binding_key) {
@@ -934,7 +914,7 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
         }
 
         auto null_bitmap = std::make_shared<roaring::Roaring>();
-        if (binding.inverted_reader->has_null()) {
+        if (rejected_doc_collector == nullptr && binding.inverted_reader->has_null()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
             RETURN_IF_ERROR(binding.inverted_reader->read_null_bitmap(
                     context, &null_bitmap_cache_handle, nullptr));
@@ -963,7 +943,9 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
     if (binding.use_direct_index_reader()) {
         auto direct_query_type = direct_index_query_type_for_clause(clause_type);
         if (direct_query_type == InvertedIndexQueryType::UNKNOWN_QUERY) {
-            return finish_leaf_query(make_unknown_query(num_rows));
+            return reject_unknown_query(
+                    fmt::format("direct index does not support clause type '{}' for field '{}'",
+                                clause_type, field_name));
         }
 
         auto value_type = unwrap_direct_index_value_type(binding.column_type);
@@ -972,12 +954,14 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
         if (!parse_status.ok()) {
             LOG(INFO) << "search: scalar leaf value is unsupported, field=" << field_name
                       << ", value='" << value << "', reason=" << parse_status.to_string();
-            return finish_leaf_query(make_unknown_query(num_rows));
+            return reject_unknown_query(fmt::format("failed to parse value for field '{}': {}",
+                                                    field_name, parse_status.to_string()));
         }
 
         auto* iterator = resolver.get_iterator(field_name);
         if (iterator == nullptr) {
-            return finish_leaf_query(make_unknown_query(num_rows));
+            return reject_unknown_query(
+                    fmt::format("missing direct index iterator for field '{}'", field_name));
         }
 
         segment_v2::InvertedIndexParam param;
@@ -991,7 +975,7 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
 
         std::shared_ptr<roaring::Roaring> null_bitmap = std::make_shared<roaring::Roaring>();
         auto has_null = iterator->has_null();
-        if (has_null.has_value() && has_null.value()) {
+        if (rejected_doc_collector == nullptr && has_null.has_value() && has_null.value()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
             RETURN_IF_ERROR(iterator->read_null_bitmap(&null_bitmap_cache_handle));
             if (auto bitmap = null_bitmap_cache_handle.get_bitmap(); bitmap != nullptr) {
@@ -1003,7 +987,8 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
     }
 
     if (binding.lucene_reader == nullptr) {
-        return finish_leaf_query(make_unknown_query(num_rows));
+        return reject_unknown_query(
+                fmt::format("missing CLucene reader for field '{}'", field_name));
     }
 
     FunctionSearch::ClauseTypeCategory category = get_clause_type_category(clause_type);

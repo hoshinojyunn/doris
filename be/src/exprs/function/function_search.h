@@ -42,6 +42,7 @@ namespace doris {
 using namespace doris::segment_v2;
 
 class IndexExecContext;
+class SearchRejectedDocCollector;
 
 class FunctionSearch : public IFunction {
 public:
@@ -109,18 +110,19 @@ public:
     // Map clause_type string to InvertedIndexQueryType
     InvertedIndexQueryType clause_type_to_query_type(const std::string& clause_type) const;
 
-    Status build_query_recursive(const TSearchClause& clause,
-                                 const std::shared_ptr<IndexQueryContext>& context,
-                                 FieldReaderResolver& resolver,
-                                 inverted_index::query_v2::QueryPtr* out, std::string* binding_key,
-                                 const std::string& default_operator, int32_t minimum_should_match,
-                                 uint32_t num_rows = 0) const;
+    Status build_query_recursive(
+            const TSearchClause& clause, const std::shared_ptr<IndexQueryContext>& context,
+            FieldReaderResolver& resolver, inverted_index::query_v2::QueryPtr* out,
+            std::string* binding_key, const std::string& default_operator,
+            int32_t minimum_should_match, uint32_t num_rows = 0,
+            SearchRejectedDocCollector* rejected_doc_collector = nullptr) const;
 
     Status build_leaf_query(const TSearchClause& clause,
                             const std::shared_ptr<IndexQueryContext>& context,
                             FieldReaderResolver& resolver, inverted_index::query_v2::QueryPtr* out,
                             std::string* binding_key, const std::string& default_operator,
-                            int32_t minimum_should_match, uint32_t num_rows = 0) const;
+                            int32_t minimum_should_match, uint32_t num_rows = 0,
+                            SearchRejectedDocCollector* rejected_doc_collector = nullptr) const;
 };
 
 } // namespace doris

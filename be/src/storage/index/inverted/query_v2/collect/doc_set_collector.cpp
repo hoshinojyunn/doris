@@ -24,24 +24,29 @@ namespace doris::segment_v2::inverted_index::query_v2 {
 void collect_multi_segment_doc_set(const WeightPtr& weight, const QueryExecutionContext& context,
                                    const std::string& binding_key,
                                    const std::shared_ptr<roaring::Roaring>& roaring,
-                                   const CollectionSimilarityPtr& similarity, bool enable_scoring) {
-    for_each_index_segment(context, binding_key,
-                           [&](const QueryExecutionContext& seg_ctx, uint32_t doc_base) {
-                               auto scorer = weight->scorer(seg_ctx, binding_key);
-                               if (!scorer) {
-                                   return;
-                               }
+                                   const CollectionSimilarityPtr& similarity, bool enable_scoring,
+                                   const std::shared_ptr<const roaring::Roaring>& excluded_docs) {
+    for_each_index_segment(
+            context, binding_key, [&](const QueryExecutionContext& seg_ctx, uint32_t doc_base) {
+                auto scorer = weight->scorer(seg_ctx, binding_key);
+                if (!scorer) {
+                    return;
+                }
 
-                               uint32_t doc = scorer->doc();
-                               while (doc != TERMINATED) {
-                                   uint32_t global_doc = doc + doc_base;
-                                   roaring->add(global_doc);
-                                   if (enable_scoring && similarity) {
-                                       similarity->collect(global_doc, scorer->score());
-                                   }
-                                   doc = scorer->advance();
-                               }
-                           });
+                uint32_t doc = scorer->doc();
+                while (doc != TERMINATED) {
+                    uint32_t global_doc = doc + doc_base;
+                    if (excluded_docs != nullptr && excluded_docs->contains(global_doc)) {
+                        doc = scorer->advance();
+                        continue;
+                    }
+                    roaring->add(global_doc);
+                    if (enable_scoring && similarity) {
+                        similarity->collect(global_doc, scorer->score());
+                    }
+                    doc = scorer->advance();
+                }
+            });
 }
 
 } // namespace doris::segment_v2::inverted_index::query_v2

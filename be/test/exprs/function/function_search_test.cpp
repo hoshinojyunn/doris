@@ -45,6 +45,8 @@
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_iterator.h"
 #include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/query_v2/bit_set_query/bit_set_query.h"
+#include "storage/index/inverted/query_v2/boolean_query/boolean_query_builder.h"
 #include "storage/index/inverted/query_v2/collect/doc_set_collector.h"
 #include "storage/index/inverted/query_v2/collect/top_k_collector.h"
 #include "storage/index/inverted/query_v2/phrase_query/multi_phrase_query.h"
@@ -149,16 +151,38 @@ public:
     int read_calls = 0;
 };
 
+class RejectingNullBitmapIterator final : public segment_v2::IndexIterator {
+public:
+    segment_v2::IndexReaderPtr get_reader(
+            segment_v2::IndexReaderType /*reader_type*/) const override {
+        return nullptr;
+    }
+
+    Status read_from_index(const segment_v2::IndexParam& /*param*/) override {
+        return Status::OK();
+    }
+
+    Status read_null_bitmap(segment_v2::InvertedIndexQueryCacheHandle* /*cache_handle*/) override {
+        return Status::InternalError("test null bitmap read failure");
+    }
+
+    Result<bool> has_null() override { return true; }
+};
+
 class DummyInvertedIndexReader final : public segment_v2::InvertedIndexReader {
 public:
     explicit DummyInvertedIndexReader(const TabletIndex* index_meta)
-            : segment_v2::InvertedIndexReader(index_meta, nullptr) {}
+            : segment_v2::InvertedIndexReader(index_meta, nullptr) {
+        set_has_null(false);
+    }
 
     DummyInvertedIndexReader(const TabletIndex* index_meta,
                              std::shared_ptr<segment_v2::IndexFileReader> index_file_reader,
                              segment_v2::InvertedIndexReaderType reader_type)
             : segment_v2::InvertedIndexReader(index_meta, std::move(index_file_reader)),
-              _reader_type(reader_type) {}
+              _reader_type(reader_type) {
+        set_has_null(false);
+    }
 
     Status new_iterator(std::unique_ptr<segment_v2::IndexIterator>* /*iterator*/) override {
         return Status::OK();
@@ -1190,6 +1214,31 @@ TEST_F(FunctionSearchTest, TestNullIterators) {
                 std::string::npos);
 }
 
+TEST_F(FunctionSearchTest, TestEmptyIteratorPreservesResolverError) {
+    TSearchParam search_param;
+    search_param.original_dsl = "title:hello";
+
+    TSearchClause root_clause;
+    root_clause.clause_type = "TERM";
+    root_clause.field_name = "title";
+    root_clause.value = "hello";
+    root_clause.__isset.field_name = true;
+    root_clause.__isset.value = true;
+    search_param.root = root_clause;
+
+    segment_v2::InvertedIndexIterator iterator;
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_types;
+    data_types["title"] = {"title", std::make_shared<DataTypeString>()};
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators["title"] = &iterator;
+
+    InvertedIndexResultBitmap bitmap_result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_types, iterators, 100, bitmap_result);
+
+    EXPECT_FALSE(status.ok());
+}
+
 TEST_F(FunctionSearchTest, TestMismatchedFieldNames) {
     // Test query referencing fields not available in iterators
     TSearchParam search_param;
@@ -2117,8 +2166,33 @@ TEST_F(FunctionSearchTest, TestBuildLeafQueryVariantMissingFieldReturnsUnknown) 
     EXPECT_EQ(inverted_index::query_v2::TERMINATED, scorer->doc());
     ASSERT_TRUE(scorer->has_null_bitmap());
     const auto* null_bitmap = scorer->get_null_bitmap();
-    ASSERT_NE(null_bitmap, nullptr);
+    ASSERT_NE(nullptr, null_bitmap);
     EXPECT_EQ(5u, null_bitmap->cardinality());
+}
+
+TEST_F(FunctionSearchTest, TestOperatorBooleanQueryRetainsThreeValuedScorerSemantics) {
+    auto true_bitmap = std::make_shared<roaring::Roaring>();
+    true_bitmap->add(0);
+    auto null_bitmap = std::make_shared<roaring::Roaring>();
+    null_bitmap->add(1);
+    null_bitmap->add(2);
+
+    auto builder = inverted_index::query_v2::create_operator_boolean_query_builder(
+            inverted_index::query_v2::OperatorType::OP_NOT);
+    builder->add(std::make_shared<inverted_index::query_v2::BitSetQuery>(true_bitmap, null_bitmap));
+    auto query = builder->build();
+
+    auto weight = query->weight(false);
+    ASSERT_NE(nullptr, weight);
+    inverted_index::query_v2::QueryExecutionContext exec_ctx;
+    exec_ctx.segment_num_rows = 3;
+    auto scorer = weight->scorer(exec_ctx);
+    ASSERT_NE(nullptr, scorer);
+    expect_bitmap_eq(collect_docs(scorer), {});
+    ASSERT_TRUE(scorer->has_null_bitmap());
+    const auto* scorer_null_bitmap = scorer->get_null_bitmap();
+    ASSERT_NE(nullptr, scorer_null_bitmap);
+    expect_bitmap_eq(*scorer_null_bitmap, {1, 2});
 }
 
 TEST_F(FunctionSearchTest, TestFieldReaderResolverVariantSubcolumnWithMissingIterator) {
@@ -3096,6 +3170,209 @@ TEST_F(FunctionSearchTest, TestSniiNativeScoredQueryFallsBackToConstantScorerWit
     expect_bitmap_eq(collect_docs(scorer), {0, 1, 2});
 }
 
+TEST_F(FunctionSearchTest, TestSearchRejectsNullDocsFromEveryReferencedField) {
+    auto title_meta = make_test_inverted_index(46);
+    auto content_meta = make_test_inverted_index(47);
+    auto title_file_reader = std::make_shared<RejectingCluceneIndexFileReader>();
+    auto content_file_reader = std::make_shared<RejectingCluceneIndexFileReader>();
+    auto title_reader =
+            std::make_shared<RecordingNativeInvertedIndexReader>(&title_meta, title_file_reader);
+    auto content_reader = std::make_shared<RecordingNativeInvertedIndexReader>(&content_meta,
+                                                                               content_file_reader);
+    title_reader->set_query_result("alpha", make_bitmap({0, 1}));
+    content_reader->set_query_result("beta", make_bitmap({2}));
+    content_reader->set_null_bitmap(make_bitmap({0}));
+
+    segment_v2::InvertedIndexIterator title_iterator;
+    title_iterator.add_reader(segment_v2::InvertedIndexReaderType::FULLTEXT, title_reader);
+    segment_v2::InvertedIndexIterator content_iterator;
+    content_iterator.add_reader(segment_v2::InvertedIndexReaderType::FULLTEXT, content_reader);
+
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "title", IndexFieldNameAndTypePair {"title", std::make_shared<DataTypeString>()});
+    data_type_with_names.emplace(
+            "content", IndexFieldNameAndTypePair {"content", std::make_shared<DataTypeString>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators.emplace("title", &title_iterator);
+    iterators.emplace("content", &content_iterator);
+
+    auto title_clause = make_leaf_clause("TERM", "alpha");
+    title_clause.field_name = "title";
+    auto content_clause = make_leaf_clause("TERM", "beta");
+    content_clause.field_name = "content";
+    TSearchClause root;
+    root.clause_type = "OR";
+    root.children = {title_clause, content_clause};
+    root.__isset.children = true;
+
+    TSearchParam search_param;
+    search_param.original_dsl = "title:alpha OR content:beta";
+    search_param.root = root;
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, false);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    expect_bitmap_eq(*result.get_data_bitmap(), {1, 2});
+    ASSERT_NE(nullptr, result.get_null_bitmap());
+    EXPECT_TRUE(result.get_null_bitmap()->isEmpty());
+    EXPECT_EQ(1, content_reader->null_bitmap_calls);
+}
+
+TEST_F(FunctionSearchTest, TestSearchRejectsAllWhenNullBitmapCannotBeRead) {
+    RejectingNullBitmapIterator iterator;
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "title", IndexFieldNameAndTypePair {"title", std::make_shared<DataTypeString>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators.emplace("title", &iterator);
+
+    auto title_clause = make_leaf_clause("TERM", "alpha");
+    title_clause.field_name = "title";
+    TSearchParam search_param;
+    search_param.original_dsl = "title:alpha";
+    search_param.root = title_clause;
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, false);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    EXPECT_TRUE(result.get_data_bitmap()->isEmpty());
+    ASSERT_NE(nullptr, result.get_null_bitmap());
+    EXPECT_TRUE(result.get_null_bitmap()->isEmpty());
+}
+
+TEST_F(FunctionSearchTest, TestSearchRejectsAllForMissingVariantSubcolumnUnderNot) {
+    auto title_meta = make_test_inverted_index(48);
+    auto title_file_reader = std::make_shared<RejectingCluceneIndexFileReader>();
+    auto title_reader =
+            std::make_shared<RecordingNativeInvertedIndexReader>(&title_meta, title_file_reader);
+    title_reader->set_query_result("alpha", make_bitmap({0, 1}));
+
+    segment_v2::InvertedIndexIterator title_iterator;
+    title_iterator.add_reader(segment_v2::InvertedIndexReaderType::FULLTEXT, title_reader);
+
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "title", IndexFieldNameAndTypePair {"title", std::make_shared<DataTypeString>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators.emplace("title", &title_iterator);
+
+    auto title_clause = make_leaf_clause("TERM", "alpha");
+    title_clause.field_name = "title";
+    auto missing_clause = make_leaf_clause("TERM", "value");
+    missing_clause.field_name = "data.missing";
+    TSearchClause not_clause;
+    not_clause.clause_type = "NOT";
+    not_clause.children = {missing_clause};
+    not_clause.__isset.children = true;
+    TSearchClause root;
+    root.clause_type = "AND";
+    root.children = {title_clause, not_clause};
+    root.__isset.children = true;
+
+    TSearchFieldBinding missing_binding;
+    missing_binding.field_name = "data.missing";
+    missing_binding.is_variant_subcolumn = true;
+    missing_binding.__isset.is_variant_subcolumn = true;
+
+    TSearchParam search_param;
+    search_param.original_dsl = "title:alpha AND NOT data.missing:value";
+    search_param.root = root;
+    search_param.field_bindings = {missing_binding};
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, false);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    EXPECT_TRUE(result.get_data_bitmap()->isEmpty());
+    ASSERT_NE(nullptr, result.get_null_bitmap());
+    EXPECT_TRUE(result.get_null_bitmap()->isEmpty());
+}
+
+TEST_F(FunctionSearchTest, TestLuceneMustNotRejectsReferencedFieldNullDocs) {
+    auto content_meta = make_test_inverted_index(49);
+    auto content_file_reader = std::make_shared<RejectingCluceneIndexFileReader>();
+    auto content_reader = std::make_shared<RecordingNativeInvertedIndexReader>(&content_meta,
+                                                                               content_file_reader);
+    content_reader->set_query_result("beta", make_bitmap({2}));
+    content_reader->set_null_bitmap(make_bitmap({1}));
+
+    segment_v2::InvertedIndexIterator content_iterator;
+    content_iterator.add_reader(segment_v2::InvertedIndexReaderType::FULLTEXT, content_reader);
+
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "content", IndexFieldNameAndTypePair {"content", std::make_shared<DataTypeString>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators.emplace("content", &content_iterator);
+
+    TSearchClause match_all_clause;
+    match_all_clause.clause_type = "MATCH_ALL_DOCS";
+    match_all_clause.occur = TSearchOccur::MUST;
+    match_all_clause.__isset.occur = true;
+    auto content_clause = make_leaf_clause("TERM", "beta");
+    content_clause.field_name = "content";
+    content_clause.occur = TSearchOccur::MUST_NOT;
+    content_clause.__isset.occur = true;
+    TSearchClause root;
+    root.clause_type = "OCCUR_BOOLEAN";
+    root.children = {match_all_clause, content_clause};
+    root.__isset.children = true;
+
+    TSearchParam search_param;
+    search_param.original_dsl = "+* -content:beta";
+    search_param.root = root;
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, false);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    expect_bitmap_eq(*result.get_data_bitmap(), {0, 3});
+    ASSERT_NE(nullptr, result.get_null_bitmap());
+    EXPECT_TRUE(result.get_null_bitmap()->isEmpty());
+}
+
+TEST_F(FunctionSearchTest, TestSearchStandaloneMatchAllDoesNotReferenceFields) {
+    auto title_meta = make_test_inverted_index(51);
+    auto title_file_reader = std::make_shared<RejectingCluceneIndexFileReader>();
+    auto title_reader =
+            std::make_shared<RecordingNativeInvertedIndexReader>(&title_meta, title_file_reader);
+    title_reader->set_null_bitmap(make_bitmap({1}));
+
+    segment_v2::InvertedIndexIterator title_iterator;
+    title_iterator.add_reader(segment_v2::InvertedIndexReaderType::FULLTEXT, title_reader);
+
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "title", IndexFieldNameAndTypePair {"title", std::make_shared<DataTypeString>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators.emplace("title", &title_iterator);
+
+    TSearchClause root;
+    root.clause_type = "MATCH_ALL_DOCS";
+    TSearchParam search_param;
+    search_param.original_dsl = "*";
+    search_param.root = root;
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, false);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    expect_bitmap_eq(*result.get_data_bitmap(), {0, 1, 2, 3});
+}
+
 TEST_F(FunctionSearchTest, TestSearchDslCacheIsDisabledForSniiNativeExecution) {
     ScopedInvertedIndexQueryCache cache_guard;
     auto index_meta = make_test_inverted_index(
@@ -3224,7 +3501,45 @@ TEST_F(FunctionSearchTest, TestSearchDslCacheRemainsEnabledForUnreferencedSniiFi
     EXPECT_EQ(0, number_iterator.read_calls);
 }
 
-TEST_F(FunctionSearchTest, TestBuildLeafQueryDirectUnknownClauseUsesLeafMapper) {
+TEST_F(FunctionSearchTest, TestSearchDslCacheHitReturnsBinaryResultWithoutNullLookup) {
+    ScopedInvertedIndexQueryCache cache_guard;
+    auto number_index_meta = make_test_inverted_index(52);
+    auto number_file_reader = std::make_shared<RejectingCluceneIndexFileReader>(
+            InvertedIndexStorageFormatPB::V2, "/tmp/search_null_cache_idx");
+    auto number_reader = std::make_shared<RecordingNativeInvertedIndexReader>(
+            &number_index_meta, number_file_reader, InvertedIndexReaderType::FULLTEXT);
+    number_reader->set_null_bitmap(make_bitmap({1}));
+
+    InvertedIndexIterator number_iterator;
+    number_iterator.add_reader(InvertedIndexReaderType::FULLTEXT, number_reader);
+
+    std::unordered_map<std::string, IndexFieldNameAndTypePair> data_type_with_names;
+    data_type_with_names.emplace(
+            "age", IndexFieldNameAndTypePair {"age", std::make_shared<DataTypeInt32>()});
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    iterators["age"] = &number_iterator;
+
+    TSearchClause age_clause = make_leaf_clause("TERM", "42");
+    age_clause.field_name = "age";
+    TSearchParam search_param;
+    search_param.original_dsl = "age:42";
+    search_param.root = age_clause;
+    ASSERT_TRUE(insert_search_dsl_cache(cache_guard.get(), number_file_reader, search_param,
+                                        make_bitmap({1, 3}))
+                        .ok());
+
+    InvertedIndexResultBitmap result;
+    auto status = function_search->evaluate_inverted_index_with_search_param(
+            search_param, data_type_with_names, iterators, 4, result, true);
+
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    ASSERT_NE(nullptr, result.get_data_bitmap());
+    expect_bitmap_eq(*result.get_data_bitmap(), {1, 3});
+    EXPECT_EQ(0, number_reader->null_bitmap_calls);
+}
+
+TEST_F(FunctionSearchTest,
+       TestBuildLeafQueryDirectUnsupportedClauseRetainsUnknownWithoutCollector) {
     TSearchClause clause;
     clause.clause_type = "PHRASE";
     clause.field_name = "var.items.active";

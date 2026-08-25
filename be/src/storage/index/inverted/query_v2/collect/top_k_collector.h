@@ -102,6 +102,6 @@ void collect_multi_segment_top_k(
         const WeightPtr& weight, const QueryExecutionContext& context,
         const std::string& binding_key, size_t k, const std::shared_ptr<roaring::Roaring>& roaring,
         const CollectionSimilarityPtr& similarity, bool use_wand = true,
-        const std::shared_ptr<const roaring::Roaring>& delete_bitmap = nullptr);
+        const std::shared_ptr<const roaring::Roaring>& excluded_docs = nullptr);
 
 } // namespace doris::segment_v2::inverted_index::query_v2
